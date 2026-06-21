@@ -59,4 +59,9 @@ async def analytics(request: Request):
             "breaches": sum(1 for x in latencies if x > threshold)
         }
 
-    return result
+    return JSONResponse(
+        content=result,
+        headers={
+            "Access-Control-Allow-Origin": "*"
+        }
+    )
