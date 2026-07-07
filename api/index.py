@@ -7,18 +7,6 @@ from collections import defaultdict, deque
 
 app = FastAPI()
 
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://app-v3s45q.example.com",
-        "https://exam.sanand.workers.dev",
-    ],
-    allow_methods=["GET", "OPTIONS"],
-    allow_headers=["X-Request-ID", "X-Client-Id", "Content-Type"],
-    expose_headers=["X-Request-ID"],
-)
-
 RATE_LIMIT = 15
 WINDOW = 10
 requests = defaultdict(deque)
@@ -41,7 +29,11 @@ async def middleware(request: Request, call_next):
         if len(bucket) >= RATE_LIMIT:
             return JSONResponse(
                 status_code=429,
-                content={"detail": "Rate limit exceeded", "request_id": request_id},
+                content={
+                    "email": EMAIL,
+                    "request_id": request_id,
+                    "detail": "Rate limit exceeded",
+                },
                 headers={"X-Request-ID": request_id},
             )
 
@@ -59,3 +51,16 @@ async def ping(request: Request):
         "email": EMAIL,
         "request_id": request.state.request_id,
     }
+
+
+# Keep CORS middleware LAST so it wraps even 429 responses
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://app-v3s45q.example.com",
+        "https://exam.sanand.workers.dev",
+    ],
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["X-Request-ID", "X-Client-Id", "Content-Type"],
+    expose_headers=["X-Request-ID"],
+)
