@@ -1,68 +1,79 @@
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import json, math
-from pathlib import Path
+import time
+import uuid
+from collections import defaultdict, deque
 
 app = FastAPI()
-app.router.redirect_slashes = False
+
+YOUR_EMAIL = "director@shrimayanand.com"
+
+ALLOWED_ORIGINS = [
+    "https://app-v3s45q.example.com",
+
+    # Put your exam/grader page origin here also.
+    # Example:
+    # "https://exam.example.com",
+]
+
+RATE_LIMIT = 15
+WINDOW_SECONDS = 10
+
+client_requests = defaultdict(deque)
+
 
 @app.middleware("http")
-async def cors_everywhere(request: Request, call_next):
+async def request_context_and_rate_limit(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+
+    # Let CORS preflight pass
     if request.method == "OPTIONS":
-        return Response(
-            status_code=200,
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "*",
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+    client_id = request.headers.get("X-Client-Id", "anonymous")
+    now = time.time()
+
+    bucket = client_requests[client_id]
+
+    # Remove old requests outside 10 second window
+    while bucket and bucket[0] <= now - WINDOW_SECONDS:
+        bucket.popleft()
+
+    # If already used 15 requests in 10 seconds, block
+    if len(bucket) >= RATE_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": "Rate limit exceeded",
+                "request_id": request_id,
             },
+            headers={"X-Request-ID": request_id},
         )
 
+    bucket.append(now)
+
+    request.state.request_id = request_id
+
     response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["X-Request-ID"] = request_id
     return response
 
-DATA_PATH = Path(__file__).resolve().parent.parent / "q-vercel-latency.json"
 
-with open(DATA_PATH, "r") as f:
-    data = json.load(f)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["X-Request-ID", "X-Client-Id", "Content-Type"],
+)
 
-def calculate(body):
-    regions = body["regions"]
-    threshold = body["threshold_ms"]
-    result = {}
 
-    for region in regions:
-        rows = [r for r in data if r["region"] == region]
-
-        latencies = [r["latency_ms"] for r in rows]
-        uptimes = [r["uptime_pct"] for r in rows]
-
-        latencies_sorted = sorted(latencies)
-        p95_index = math.ceil(0.95 * len(latencies_sorted)) - 1
-
-        result[region] = {
-            "avg_latency": sum(latencies) / len(latencies),
-            "p95_latency": latencies_sorted[p95_index],
-            "avg_uptime": sum(uptimes) / len(uptimes),
-            "breaches": sum(1 for x in latencies if x > threshold),
-        }
-
-    return result
-
-@app.get("/")
-def home():
-    return {"message": "POST to /api"}
-
-@app.post("/")
-@app.post("/api")
-@app.post("/api/")
-async def analytics(request: Request):
-    body = await request.json()
-    result = calculate(body)
-    return JSONResponse(
-        content=result,
-        headers={"Access-Control-Allow-Origin": "*"},
-    )
+@app.get("/ping")
+async def ping(request: Request):
+    return {
+        "email": YOUR_EMAIL,
+        "request_id": request.state.request_id,
+    }
