@@ -1,75 +1,63 @@
+YOUR_EMAIL = "24f2008500@ds.study.iitm.ac.in"
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import time
 import uuid
+import time
 from collections import defaultdict, deque
 
 app = FastAPI()
 
-YOUR_EMAIL = "24f2008500@ds.study.iitm.ac.in"
-
 ALLOWED_ORIGINS = [
     "https://app-v3s45q.example.com",
+
+    # Add the exam/grader website origin here if you know it.
+    # Example:
+    # "https://exam-page-domain.com",
 ]
 
-RATE_LIMIT = 15
-WINDOW_SECONDS = 10
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["X-Request-ID", "X-Client-Id", "Content-Type"],
+)
 
-client_requests = defaultdict(deque)
+RATE_LIMIT = 15
+WINDOW = 10
+requests = defaultdict(deque)
 
 
 @app.middleware("http")
-async def request_context_and_rate_limit(request: Request, call_next):
+async def middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
 
-    # Let CORS preflight pass
-    if request.method == "OPTIONS":
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        return response
+    if request.method != "OPTIONS":
+        client_id = request.headers.get("X-Client-Id", "anonymous")
+        now = time.time()
+        bucket = requests[client_id]
 
-    client_id = request.headers.get("X-Client-Id", "anonymous")
-    now = time.time()
+        while bucket and bucket[0] <= now - WINDOW:
+            bucket.popleft()
 
-    bucket = client_requests[client_id]
+        if len(bucket) >= RATE_LIMIT:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded", "request_id": request_id},
+                headers={"X-Request-ID": request_id},
+            )
 
-    # Remove old requests outside 10 second window
-    while bucket and bucket[0] <= now - WINDOW_SECONDS:
-        bucket.popleft()
-
-    # If already used 15 requests in 10 seconds, block
-    if len(bucket) >= RATE_LIMIT:
-        return JSONResponse(
-            status_code=429,
-            content={
-                "detail": "Rate limit exceeded",
-                "request_id": request_id,
-            },
-            headers={"X-Request-ID": request_id},
-        )
-
-    bucket.append(now)
+        bucket.append(now)
 
     request.state.request_id = request_id
-
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     return response
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
-    allow_headers=["X-Request-ID", "X-Client-Id", "Content-Type"],
-)
-
-
 @app.get("/ping")
 async def ping(request: Request):
     return {
-        "email": YOUR_EMAIL,
+        "email": EMAIL,
         "request_id": request.state.request_id,
     }
