@@ -7,16 +7,16 @@ from collections import defaultdict, deque
 
 app = FastAPI()
 
-ALLOWED_ORIGINS = [
-    "https://app-v3s45q.example.com",
-    "https://exam.sanand.workers.dev"
-]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=[
+        "https://app-v3s45q.example.com",
+        "https://exam.sanand.workers.dev",
+    ],
     allow_methods=["GET", "OPTIONS"],
     allow_headers=["X-Request-ID", "X-Client-Id", "Content-Type"],
+    expose_headers=["X-Request-ID"],
 )
 
 RATE_LIMIT = 15
